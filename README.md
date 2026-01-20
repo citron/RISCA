@@ -97,6 +97,32 @@ Le fichier `.gitignore` est configuré pour exclure :
 
 - `pacs_nm_retriever.py` - Récupération d'images depuis le PACS
 - `find_chest_scans.py` - Identification des scintigraphies du torse
+- `list_dicom_info.py` - Liste les informations de tous les fichiers DICOM
 - `.env.example` - Template de configuration
 - `PACS_SAFETY_CHECKLIST.md` - Checklist de sécurité
 - `QUICKSTART.md` - Guide de démarrage rapide
+
+## Lister les informations des fichiers DICOM
+
+Pour obtenir un aperçu de tous les fichiers DICOM (nom patient, date, zone explorée) :
+
+```bash
+# Générer un rapport complet
+./list_dicom_info.py -i ./nm_images -o dicom_list.csv
+
+# Générer un rapport minimal (seulement nom, date, zone, fichier)
+./list_dicom_info.py -i ./nm_images -o dicom_list.csv --minimal
+
+# Anonymiser les noms des patients
+./list_dicom_info.py -i ./nm_images -o dicom_list.csv --anonymize
+
+# Combiner anonymisation et rapport minimal
+./list_dicom_info.py -i ./nm_images -o dicom_list.csv --anonymize --minimal
+```
+
+**Informations extraites :**
+- Nom du patient (PatientName)
+- Date d'observation (StudyDate, SeriesDate, ou AcquisitionDate)
+- Zone explorée (BodyPartExamined + descriptions)
+- Modalité, institution, UIDs, etc.
+
