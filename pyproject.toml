@@ -1,0 +1,14 @@
+[project]
+name = "risca"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11.8"
+dependencies = [
+    "lxml>=6.0.2",
+    "pandas>=2.3.3",
+    "pyarrow>=23.0.0",
+    "pydicom>=3.0.1",
+    "pynetdicom>=3.0.4",
+    "python-dotenv>=1.0.0",
+]

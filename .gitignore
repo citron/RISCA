@@ -1,0 +1,6 @@
+nm_images/
+data/
+old/
+test_dcmtk/
+__pycache__/
+.env
