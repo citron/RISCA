@@ -101,11 +101,97 @@
         #viewer {
             flex: 1;
             display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            background: #0a0a0a;
+        }
+        
+        #image-controls {
+            background: #1a1a1a;
+            padding: 15px 20px;
+            border-bottom: 1px solid #333;
+            display: none;
+        }
+        
+        #image-controls.show {
+            display: block;
+        }
+        
+        .control-row {
+            display: flex;
+            align-items: center;
+            margin-bottom: 10px;
+            gap: 15px;
+        }
+        
+        .control-row:last-child {
+            margin-bottom: 0;
+        }
+        
+        .control-label {
+            color: #888;
+            min-width: 80px;
+            font-size: 13px;
+        }
+        
+        .control-slider {
+            flex: 1;
+            height: 6px;
+            background: #333;
+            border-radius: 3px;
+            outline: none;
+            -webkit-appearance: none;
+        }
+        
+        .control-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 16px;
+            height: 16px;
+            background: #4CAF50;
+            cursor: pointer;
+            border-radius: 50%;
+        }
+        
+        .control-slider::-moz-range-thumb {
+            width: 16px;
+            height: 16px;
+            background: #4CAF50;
+            cursor: pointer;
+            border-radius: 50%;
+            border: none;
+        }
+        
+        .control-value {
+            color: #e0e0e0;
+            min-width: 40px;
+            text-align: right;
+            font-size: 13px;
+        }
+        
+        .lut-select {
+            flex: 1;
+            padding: 6px 10px;
+            background: #2a2a2a;
+            border: 1px solid #444;
+            border-radius: 4px;
+            color: #e0e0e0;
+            font-size: 13px;
+            cursor: pointer;
+        }
+        
+        .lut-select:focus {
+            outline: none;
+            border-color: #4CAF50;
+        }
+        
+        #canvas-container {
+            flex: 1;
+            display: flex;
             align-items: center;
             justify-content: center;
-            overflow: hidden;
             padding: 20px;
-            background: #0a0a0a;
+            overflow: hidden;
         }
         
         #canvas {
@@ -355,13 +441,44 @@
     </div>
     
     <div id="viewer">
-        <canvas id="canvas"></canvas>
+        <div id="image-controls">
+            <div class="control-row">
+                <span class="control-label">Contraste:</span>
+                <input type="range" class="control-slider" id="contrast-slider" min="0" max="200" value="100">
+                <span class="control-value" id="contrast-value">100%</span>
+            </div>
+            <div class="control-row">
+                <span class="control-label">Luminosité:</span>
+                <input type="range" class="control-slider" id="brightness-slider" min="-100" max="100" value="0">
+                <span class="control-value" id="brightness-value">0</span>
+            </div>
+            <div class="control-row">
+                <span class="control-label">LUT:</span>
+                <select class="lut-select" id="lut-select">
+                    <option value="none">Aucune</option>
+                    <option value="invert">Inversée</option>
+                    <option value="hot">Hot (Chaud)</option>
+                    <option value="cold">Cold (Froid)</option>
+                    <option value="rainbow">Arc-en-ciel</option>
+                    <option value="bone">Os</option>
+                    <option value="jet">Jet</option>
+                </select>
+            </div>
+        </div>
+        
+        <div id="canvas-container">
+            <canvas id="canvas"></canvas>
+        </div>
     </div>
 
     <script type="module">
         let currentImage = null;
         let allExpanded = false;
         let allPatients = [];
+        let originalImageData = null;
+        let currentContrast = 100;
+        let currentBrightness = 0;
+        let currentLUT = 'none';
         
         async function loadDicomTree() {
             const treeDiv = document.getElementById('patient-tree');
@@ -606,6 +723,107 @@
             document.querySelector('.expand-all').textContent = allExpanded ? 'Tout replier' : 'Tout déplier';
         };
         
+        // LUT functions
+        function applyLUT(value, lut) {
+            switch(lut) {
+                case 'invert':
+                    return 255 - value;
+                case 'hot':
+                    if (value < 85) return [value * 3, 0, 0];
+                    if (value < 170) return [255, (value - 85) * 3, 0];
+                    return [255, 255, (value - 170) * 3];
+                case 'cold':
+                    if (value < 85) return [0, 0, value * 3];
+                    if (value < 170) return [0, (value - 85) * 3, 255];
+                    return [(value - 170) * 3, 255, 255];
+                case 'rainbow':
+                    const h = (value / 255) * 360;
+                    const c = 1;
+                    const x = c * (1 - Math.abs((h / 60) % 2 - 1));
+                    let r = 0, g = 0, b = 0;
+                    if (h < 60) { r = c; g = x; }
+                    else if (h < 120) { r = x; g = c; }
+                    else if (h < 180) { g = c; b = x; }
+                    else if (h < 240) { g = x; b = c; }
+                    else if (h < 300) { r = x; b = c; }
+                    else { r = c; b = x; }
+                    return [r * 255, g * 255, b * 255];
+                case 'bone':
+                    const boneR = value < 113.67 ? value * 0.75 : Math.min(255, 85.125 + (value - 113.67) * 1.2);
+                    const boneG = value < 113.67 ? value * 0.75 : 85.125 + (value - 113.67) * 1.2;
+                    const boneB = value < 113.67 ? value * 0.875 : 99.3125 + (value - 113.67) * 1.1;
+                    return [boneR, boneG, boneB];
+                case 'jet':
+                    if (value < 32) return [0, 0, 128 + value * 4];
+                    if (value < 96) return [0, (value - 32) * 4, 255];
+                    if (value < 160) return [(value - 96) * 4, 255, 255 - (value - 96) * 4];
+                    if (value < 224) return [255, 255 - (value - 160) * 4, 0];
+                    return [255 - (value - 224) * 4, 0, 0];
+                default:
+                    return value;
+            }
+        }
+        
+        function applyImageAdjustments() {
+            if (!originalImageData) return;
+            
+            const canvas = document.getElementById('canvas');
+            const ctx = canvas.getContext('2d');
+            const imageData = ctx.createImageData(originalImageData.width, originalImageData.height);
+            
+            for (let i = 0; i < originalImageData.data.length; i += 4) {
+                let r = originalImageData.data[i];
+                let g = originalImageData.data[i + 1];
+                let b = originalImageData.data[i + 2];
+                
+                // Convert to grayscale for processing
+                let gray = (r + g + b) / 3;
+                
+                // Apply contrast
+                gray = ((gray - 128) * (currentContrast / 100)) + 128;
+                
+                // Apply brightness
+                gray = gray + currentBrightness;
+                
+                // Clamp
+                gray = Math.max(0, Math.min(255, gray));
+                
+                // Apply LUT
+                const lutResult = applyLUT(gray, currentLUT);
+                
+                if (Array.isArray(lutResult)) {
+                    imageData.data[i] = lutResult[0];
+                    imageData.data[i + 1] = lutResult[1];
+                    imageData.data[i + 2] = lutResult[2];
+                } else {
+                    imageData.data[i] = lutResult;
+                    imageData.data[i + 1] = lutResult;
+                    imageData.data[i + 2] = lutResult;
+                }
+                imageData.data[i + 3] = 255;
+            }
+            
+            ctx.putImageData(imageData, 0, 0);
+        }
+        
+        // Event listeners for controls
+        document.getElementById('contrast-slider').addEventListener('input', (e) => {
+            currentContrast = parseInt(e.target.value);
+            document.getElementById('contrast-value').textContent = currentContrast + '%';
+            applyImageAdjustments();
+        });
+        
+        document.getElementById('brightness-slider').addEventListener('input', (e) => {
+            currentBrightness = parseInt(e.target.value);
+            document.getElementById('brightness-value').textContent = currentBrightness;
+            applyImageAdjustments();
+        });
+        
+        document.getElementById('lut-select').addEventListener('change', (e) => {
+            currentLUT = e.target.value;
+            applyImageAdjustments();
+        });
+        
         async function loadDicomFile(path) {
             const infoPanel = document.getElementById('info-panel');
             const canvas = document.getElementById('canvas');
@@ -664,6 +882,22 @@
                 }
                 
                 ctx.putImageData(imgData, 0, 0);
+                
+                // Store original image data
+                originalImageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                
+                // Reset controls
+                currentContrast = 100;
+                currentBrightness = 0;
+                currentLUT = 'none';
+                document.getElementById('contrast-slider').value = 100;
+                document.getElementById('brightness-slider').value = 0;
+                document.getElementById('lut-select').value = 'none';
+                document.getElementById('contrast-value').textContent = '100%';
+                document.getElementById('brightness-value').textContent = '0';
+                
+                // Show controls
+                document.getElementById('image-controls').classList.add('show');
                 
             } catch (error) {
                 console.error('Erreur:', error);
