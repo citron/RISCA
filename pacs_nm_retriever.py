@@ -384,6 +384,8 @@ class PACSNMRetriever:
         
         cmd.extend(['-od', str(self.output_dir)])
         
+        logger.info(f"Running command: {' '.join(cmd)}")
+        
         try:
             result = subprocess.run(
                 cmd,
@@ -393,6 +395,10 @@ class PACSNMRetriever:
             )
             
             if result.returncode == 0:
+                # Log getscu output for debugging
+                if result.stdout:
+                    logger.debug(f"getscu stdout:\n{result.stdout}")
+                
                 # Parse output to count retrieved images
                 completed = 0
                 for line in result.stdout.split('\n'):
@@ -401,6 +407,10 @@ class PACSNMRetriever:
                             completed = int(line.split(':')[1].strip())
                         except:
                             pass
+                
+                # Count files actually in output directory
+                total_files = sum(1 for root, dirs, files in os.walk(self.output_dir) for f in files)
+                logger.info(f"Files found in {self.output_dir}: {total_files}")
                 
                 # Rename files without .dcm extension
                 renamed_count = 0
