@@ -59,8 +59,18 @@ class PACSNMRetriever:
         self.pacs_aet = pacs_aet
         self.local_aet = local_aet
         self.local_port = local_port
-        self.output_dir = Path(output_dir)
-        self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.output_dir = Path(output_dir).resolve()
+        
+        try:
+            self.output_dir.mkdir(parents=True, exist_ok=True)
+            logger.info(f"Output directory: {self.output_dir}")
+        except PermissionError as e:
+            logger.error(f"Permission denied creating directory {self.output_dir}: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Failed to create output directory {self.output_dir}: {e}")
+            raise
+        
         self.use_study_root = use_study_root
         self.dry_run = dry_run
         self.use_c_get = use_c_get
