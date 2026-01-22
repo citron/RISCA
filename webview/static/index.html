@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visualiseur DICOM</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1a1a1a;
+            color: #e0e0e0;
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+        
+        #left-panel {
+            width: 350px;
+            background: #252525;
+            border-right: 1px solid #444;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        
+        #header {
+            background: #2a2a2a;
+            padding: 15px 20px;
+            border-bottom: 2px solid #444;
+        }
+        
+        #header h1 {
+            color: #4CAF50;
+            font-size: 20px;
+            margin-bottom: 12px;
+        }
+        
+        #search-container {
+            margin-bottom: 0;
+        }
+        
+        #search-input {
+            width: 100%;
+            padding: 10px 15px;
+            background: #1a1a1a;
+            border: 1px solid #444;
+            border-radius: 5px;
+            color: #e0e0e0;
+            font-size: 14px;
+        }
+        
+        #search-input:focus {
+            outline: none;
+            border-color: #4CAF50;
+        }
+        
+        #search-input::placeholder {
+            color: #666;
+        }
+        
+        #info-panel {
+            background: #2a2a2a;
+            padding: 15px 20px;
+            border-bottom: 1px solid #444;
+            display: none;
+        }
+        
+        #info-panel.show {
+            display: block;
+        }
+        
+        .info-row {
+            margin: 6px 0;
+            font-size: 12px;
+        }
+        
+        .info-label {
+            color: #888;
+            display: inline-block;
+            width: 100px;
+            font-size: 11px;
+        }
+        
+        .info-value {
+            color: #e0e0e0;
+        }
+        
+        #sidebar {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+        }
+        
+        #viewer {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            padding: 20px;
+            background: #0a0a0a;
+        }
+        
+        #canvas {
+            max-width: 100%;
+            max-height: 100%;
+            width: auto;
+            height: auto;
+            object-fit: contain;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.8);
+            border: 1px solid #555;
+        }
+        
+        .patient-group {
+            margin-bottom: 15px;
+            background: #2a2a2a;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        
+        .patient-group.hidden {
+            display: none;
+        }
+        
+        .patient-header {
+            padding: 10px 15px;
+            background: #333;
+            cursor: pointer;
+            font-weight: bold;
+            color: #64B5F6;
+            display: flex;
+            align-items: center;
+            transition: background 0.2s;
+            font-size: 14px;
+        }
+        
+        .patient-header:hover {
+            background: #3a3a3a;
+        }
+        
+        .patient-header::before {
+            content: '👤';
+            margin-right: 8px;
+        }
+        
+        .study-item {
+            padding: 8px 15px 8px 30px;
+            background: #2a2a2a;
+            border-top: 1px solid #333;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        .study-item:hover {
+            background: #303030;
+        }
+        
+        .study-header {
+            font-weight: 600;
+            color: #81C784;
+            margin-bottom: 3px;
+            font-size: 13px;
+        }
+        
+        .study-date {
+            font-size: 11px;
+            color: #888;
+        }
+        
+        .series-list {
+            display: none;
+            padding: 5px 0;
+        }
+        
+        .series-list.expanded {
+            display: block;
+        }
+        
+        .series-item {
+            padding: 8px 15px 8px 50px;
+            background: #222;
+            border-top: 1px solid #2a2a2a;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        .series-item:hover {
+            background: #282828;
+        }
+        
+        .series-header {
+            color: #A5D6A7;
+            font-weight: 500;
+            margin-bottom: 3px;
+            font-size: 12px;
+        }
+        
+        .series-info {
+            font-size: 10px;
+            color: #666;
+        }
+        
+        .image-list {
+            display: none;
+            padding: 5px 0;
+        }
+        
+        .image-list.expanded {
+            display: block;
+        }
+        
+        .image-item {
+            padding: 5px 15px 5px 70px;
+            background: #1a1a1a;
+            border-top: 1px solid #222;
+            cursor: pointer;
+            font-size: 11px;
+            color: #999;
+            transition: all 0.2s;
+        }
+        
+        .image-item:hover {
+            background: #252525;
+            color: #fff;
+        }
+        
+        .image-item.active {
+            background: #2d5016;
+            color: #A5D6A7;
+            font-weight: 500;
+        }
+        
+        .arrow {
+            display: inline-block;
+            margin-right: 8px;
+            transition: transform 0.2s;
+        }
+        
+        .arrow.expanded {
+            transform: rotate(90deg);
+        }
+        
+        .loading {
+            text-align: center;
+            color: #888;
+            padding: 40px;
+        }
+        
+        .error {
+            color: #f44336;
+            padding: 20px;
+            text-align: center;
+        }
+        
+        .controls {
+            margin-bottom: 15px;
+            display: flex;
+            gap: 10px;
+        }
+        
+        .expand-all {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 12px;
+            flex: 1;
+        }
+        
+        .expand-all:hover {
+            background: #45a049;
+        }
+        
+        .patient-count {
+            color: #666;
+            font-size: 12px;
+            margin-bottom: 10px;
+        }
+        
+        .copyright {
+            padding: 15px 20px;
+            text-align: center;
+            font-size: 11px;
+            color: #666;
+            border-top: 1px solid #333;
+            background: #1a1a1a;
+        }
+        
+        .copyright a {
+            color: #4CAF50;
+            text-decoration: none;
+        }
+        
+        .copyright a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div id="left-panel">
+        <div id="header">
+            <h1>🏥 Visualiseur DICOM</h1>
+            <div id="search-container">
+                <input type="text" id="search-input" placeholder="🔍 Rechercher par nom de patient..." />
+            </div>
+        </div>
+        
+        <div id="info-panel">
+            <div class="info-row">
+                <span class="info-label">Patient:</span>
+                <span class="info-value" id="info-patient">-</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">Date:</span>
+                <span class="info-value" id="info-date">-</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">Modalité:</span>
+                <span class="info-value" id="info-modality">-</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">Dimensions:</span>
+                <span class="info-value" id="info-dims">-</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">Bits:</span>
+                <span class="info-value" id="info-bits">-</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">Photo:</span>
+                <span class="info-value" id="info-photo">-</span>
+            </div>
+        </div>
+        
+        <div id="sidebar">
+            <div class="controls">
+                <button class="expand-all" onclick="toggleExpandAll()">Tout déplier</button>
+            </div>
+            <div class="patient-count" id="patient-count"></div>
+            <div id="patient-tree"></div>
+        </div>
+        
+        <div class="copyright">
+            © 2026 <strong>William Gacquer</strong> · Visualiseur DICOM
+        </div>
+    </div>
+    
+    <div id="viewer">
+        <canvas id="canvas"></canvas>
+    </div>
+
+    <script type="module">
+        let currentImage = null;
+        let allExpanded = false;
+        let allPatients = [];
+        
+        async function loadDicomTree() {
+            const treeDiv = document.getElementById('patient-tree');
+            treeDiv.innerHTML = '<div class="loading">Chargement de l\'arborescence...</div>';
+            
+            try {
+                const response = await fetch('/api/tree');
+                const data = await response.json();
+                
+                allPatients = Object.values(data.patients);
+                allPatients.sort((a, b) => a.patient_name.localeCompare(b.patient_name));
+                
+                renderPatientTree(allPatients);
+                updatePatientCount(allPatients.length, allPatients.length);
+                
+            } catch (error) {
+                treeDiv.innerHTML = '<div class="error">Erreur: ' + error.message + '</div>';
+            }
+        }
+        
+        function renderPatientTree(patients) {
+            const treeDiv = document.getElementById('patient-tree');
+            treeDiv.innerHTML = '';
+            
+            patients.forEach(patient => {
+                const patientDiv = document.createElement('div');
+                patientDiv.className = 'patient-group';
+                patientDiv.dataset.patientName = patient.patient_name.toLowerCase();
+                
+                const patientHeader = document.createElement('div');
+                patientHeader.className = 'patient-header';
+                patientHeader.innerHTML = `<span class="arrow">▶</span>${patient.patient_name}`;
+                
+                const studiesDiv = document.createElement('div');
+                studiesDiv.className = 'series-list';
+                
+                const studies = Object.values(patient.studies);
+                studies.sort((a, b) => b.study_date.localeCompare(a.study_date));
+                
+                studies.forEach(study => {
+                    const studyDiv = document.createElement('div');
+                    studyDiv.className = 'study-item';
+                    
+                    const studyHeader = document.createElement('div');
+                    studyHeader.className = 'study-header';
+                    studyHeader.innerHTML = `<span class="arrow">▶</span>📅 ${study.study_description || 'Étude sans nom'} (${study.study_date})`;
+                    
+                    const seriesListDiv = document.createElement('div');
+                    seriesListDiv.className = 'series-list';
+                    
+                    const seriesList = Object.values(study.series);
+                    seriesList.sort((a, b) => a.series_description.localeCompare(b.series_description));
+                    
+                    seriesList.forEach(series => {
+                        const seriesDiv = document.createElement('div');
+                        seriesDiv.className = 'series-item';
+                        
+                        const seriesHeader = document.createElement('div');
+                        seriesHeader.className = 'series-header';
+                        seriesHeader.innerHTML = `<span class="arrow">▶</span>📊 ${series.series_description || series.modality}`;
+                        
+                        const seriesInfo = document.createElement('div');
+                        seriesInfo.className = 'series-info';
+                        seriesInfo.textContent = `${series.modality} - ${series.image_count} image(s)`;
+                        
+                        const imageListDiv = document.createElement('div');
+                        imageListDiv.className = 'image-list';
+                        
+                        series.images.sort((a, b) => a.localeCompare(b));
+                        
+                        series.images.forEach((imagePath, idx) => {
+                            const imageDiv = document.createElement('div');
+                            imageDiv.className = 'image-item';
+                            imageDiv.textContent = `🖼️ Image ${idx + 1}`;
+                            imageDiv.onclick = (e) => {
+                                e.stopPropagation();
+                                loadDicomFile(imagePath);
+                                document.querySelectorAll('.image-item').forEach(el => el.classList.remove('active'));
+                                imageDiv.classList.add('active');
+                            };
+                            imageListDiv.appendChild(imageDiv);
+                        });
+                        
+                        seriesDiv.appendChild(seriesHeader);
+                        seriesDiv.appendChild(seriesInfo);
+                        seriesDiv.appendChild(imageListDiv);
+                        
+                        seriesHeader.onclick = (e) => {
+                            e.stopPropagation();
+                            imageListDiv.classList.toggle('expanded');
+                            seriesHeader.querySelector('.arrow').classList.toggle('expanded');
+                        };
+                        
+                        seriesListDiv.appendChild(seriesDiv);
+                    });
+                    
+                    studyDiv.appendChild(studyHeader);
+                    studyDiv.appendChild(seriesListDiv);
+                    
+                    studyHeader.onclick = (e) => {
+                        e.stopPropagation();
+                        seriesListDiv.classList.toggle('expanded');
+                        studyHeader.querySelector('.arrow').classList.toggle('expanded');
+                    };
+                    
+                    studiesDiv.appendChild(studyDiv);
+                });
+                
+                patientDiv.appendChild(patientHeader);
+                patientDiv.appendChild(studiesDiv);
+                
+                patientHeader.onclick = () => {
+                    studiesDiv.classList.toggle('expanded');
+                    patientHeader.querySelector('.arrow').classList.toggle('expanded');
+                };
+                
+                treeDiv.appendChild(patientDiv);
+            });
+        }
+        
+        function updatePatientCount(visible, total) {
+            const countDiv = document.getElementById('patient-count');
+            if (visible === total) {
+                countDiv.textContent = `${total} patient(s)`;
+            } else {
+                countDiv.textContent = `${visible} / ${total} patient(s)`;
+            }
+        }
+        
+        // Recherche
+        document.getElementById('search-input').addEventListener('input', (e) => {
+            const searchTerm = e.target.value.toLowerCase().trim();
+            const patientGroups = document.querySelectorAll('.patient-group');
+            let visibleCount = 0;
+            
+            patientGroups.forEach(group => {
+                const patientName = group.dataset.patientName;
+                if (!searchTerm || patientName.includes(searchTerm)) {
+                    group.classList.remove('hidden');
+                    visibleCount++;
+                } else {
+                    group.classList.add('hidden');
+                }
+            });
+            
+            updatePatientCount(visibleCount, allPatients.length);
+        });
+        
+        window.toggleExpandAll = function() {
+            allExpanded = !allExpanded;
+            document.querySelectorAll('.series-list, .image-list').forEach(el => {
+                if (allExpanded) {
+                    el.classList.add('expanded');
+                } else {
+                    el.classList.remove('expanded');
+                }
+            });
+            document.querySelectorAll('.arrow').forEach(el => {
+                if (allExpanded) {
+                    el.classList.add('expanded');
+                } else {
+                    el.classList.remove('expanded');
+                }
+            });
+            document.querySelector('.expand-all').textContent = allExpanded ? 'Tout replier' : 'Tout déplier';
+        };
+        
+        async function loadDicomFile(path) {
+            const infoPanel = document.getElementById('info-panel');
+            const canvas = document.getElementById('canvas');
+            const ctx = canvas.getContext('2d');
+            
+            currentImage = path;
+            infoPanel.classList.remove('show');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            try {
+                const infoResponse = await fetch(`/api/dicom/info/${path}`);
+                const info = await infoResponse.json();
+                
+                document.getElementById('info-patient').textContent = info.patient_name;
+                document.getElementById('info-date').textContent = info.study_date;
+                document.getElementById('info-modality').textContent = info.modality;
+                document.getElementById('info-dims').textContent = `${info.cols} x ${info.rows}`;
+                document.getElementById('info-bits').textContent = `${info.bits_allocated} / ${info.bits_stored}`;
+                document.getElementById('info-photo').textContent = info.photometric_interpretation;
+                infoPanel.classList.add('show');
+                
+                const imageResponse = await fetch(`/api/dicom/image/${path}`);
+                const imageData = await imageResponse.json();
+                
+                const viewerDiv = document.getElementById('viewer');
+                const maxWidth = viewerDiv.clientWidth - 40;
+                const maxHeight = viewerDiv.clientHeight - 40;
+                
+                const scaleX = maxWidth / imageData.width;
+                const scaleY = maxHeight / imageData.height;
+                const scale = Math.min(scaleX, scaleY, 1);
+                
+                canvas.width = imageData.width;
+                canvas.height = imageData.height;
+                canvas.style.width = `${imageData.width * scale}px`;
+                canvas.style.height = `${imageData.height * scale}px`;
+                
+                const imgData = ctx.createImageData(imageData.width, imageData.height);
+                
+                // Les données arrivent maintenant toujours en RGB (3 octets par pixel)
+                const dataLength = imageData.data.length;
+                const pixelCount = imageData.width * imageData.height;
+                
+                if (dataLength === pixelCount * 3) {
+                    // Données RGB
+                    for (let i = 0; i < pixelCount; i++) {
+                        const srcIdx = i * 3;
+                        const dstIdx = i * 4;
+                        imgData.data[dstIdx] = imageData.data[srcIdx];         // R
+                        imgData.data[dstIdx + 1] = imageData.data[srcIdx + 1]; // G
+                        imgData.data[dstIdx + 2] = imageData.data[srcIdx + 2]; // B
+                        imgData.data[dstIdx + 3] = 255;                        // A
+                    }
+                } else {
+                    console.error('Unexpected data length:', dataLength, 'expected:', pixelCount * 3);
+                }
+                
+                ctx.putImageData(imgData, 0, 0);
+                
+            } catch (error) {
+                console.error('Erreur:', error);
+                alert('Erreur lors du chargement du fichier DICOM: ' + error.message);
+            }
+        }
+        
+        loadDicomTree();
+    </script>
+</body>
+</html>
