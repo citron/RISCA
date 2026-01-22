@@ -451,8 +451,21 @@
                         
                         seriesHeader.onclick = (e) => {
                             e.stopPropagation();
+                            const wasExpanded = imageListDiv.classList.contains('expanded');
                             imageListDiv.classList.toggle('expanded');
                             seriesHeader.querySelector('.arrow').classList.toggle('expanded');
+                            
+                            // Auto-load first image when expanding
+                            if (!wasExpanded && series.images.length > 0) {
+                                const firstImagePath = series.images[0];
+                                loadDicomFile(firstImagePath);
+                                // Wait a bit for DOM update before setting active
+                                setTimeout(() => {
+                                    const firstImageDiv = imageListDiv.querySelector('.image-item');
+                                    document.querySelectorAll('.image-item').forEach(el => el.classList.remove('active'));
+                                    if (firstImageDiv) firstImageDiv.classList.add('active');
+                                }, 50);
+                            }
                         };
                         
                         seriesListDiv.appendChild(seriesDiv);
@@ -463,8 +476,34 @@
                     
                     studyHeader.onclick = (e) => {
                         e.stopPropagation();
+                        const wasExpanded = seriesListDiv.classList.contains('expanded');
                         seriesListDiv.classList.toggle('expanded');
                         studyHeader.querySelector('.arrow').classList.toggle('expanded');
+                        
+                        // Auto-load first image when expanding
+                        if (!wasExpanded) {
+                            const seriesList = Object.values(study.series);
+                            if (seriesList.length > 0) {
+                                const firstSeries = seriesList[0];
+                                if (firstSeries.images.length > 0) {
+                                    loadDicomFile(firstSeries.images[0]);
+                                    // Auto-expand the first series and select first image
+                                    setTimeout(() => {
+                                        const firstSeriesDiv = seriesListDiv.querySelector('.series-item');
+                                        if (firstSeriesDiv) {
+                                            const firstImageList = firstSeriesDiv.querySelector('.image-list');
+                                            const firstSeriesArrow = firstSeriesDiv.querySelector('.arrow');
+                                            if (firstImageList) firstImageList.classList.add('expanded');
+                                            if (firstSeriesArrow) firstSeriesArrow.classList.add('expanded');
+                                            
+                                            const firstImageDiv = firstImageList?.querySelector('.image-item');
+                                            document.querySelectorAll('.image-item').forEach(el => el.classList.remove('active'));
+                                            if (firstImageDiv) firstImageDiv.classList.add('active');
+                                        }
+                                    }, 50);
+                                }
+                            }
+                        }
                     };
                     
                     studiesDiv.appendChild(studyDiv);
@@ -474,8 +513,46 @@
                 patientDiv.appendChild(studiesDiv);
                 
                 patientHeader.onclick = () => {
+                    const wasExpanded = studiesDiv.classList.contains('expanded');
                     studiesDiv.classList.toggle('expanded');
                     patientHeader.querySelector('.arrow').classList.toggle('expanded');
+                    
+                    // Auto-load first image when expanding
+                    if (!wasExpanded) {
+                        const studies = Object.values(patient.studies);
+                        if (studies.length > 0) {
+                            const firstStudy = studies[0];
+                            const seriesList = Object.values(firstStudy.series);
+                            if (seriesList.length > 0) {
+                                const firstSeries = seriesList[0];
+                                if (firstSeries.images.length > 0) {
+                                    loadDicomFile(firstSeries.images[0]);
+                                    // Auto-expand the first study and series
+                                    setTimeout(() => {
+                                        const firstStudyDiv = studiesDiv.querySelector('.study-item');
+                                        if (firstStudyDiv) {
+                                            const firstSeriesList = firstStudyDiv.querySelector('.series-list');
+                                            const firstStudyArrow = firstStudyDiv.querySelector('.arrow');
+                                            if (firstSeriesList) firstSeriesList.classList.add('expanded');
+                                            if (firstStudyArrow) firstStudyArrow.classList.add('expanded');
+                                            
+                                            const firstSeriesDiv = firstSeriesList?.querySelector('.series-item');
+                                            if (firstSeriesDiv) {
+                                                const firstImageList = firstSeriesDiv.querySelector('.image-list');
+                                                const firstSeriesArrow = firstSeriesDiv.querySelector('.arrow');
+                                                if (firstImageList) firstImageList.classList.add('expanded');
+                                                if (firstSeriesArrow) firstSeriesArrow.classList.add('expanded');
+                                                
+                                                const firstImageDiv = firstImageList?.querySelector('.image-item');
+                                                document.querySelectorAll('.image-item').forEach(el => el.classList.remove('active'));
+                                                if (firstImageDiv) firstImageDiv.classList.add('active');
+                                            }
+                                        }
+                                    }, 50);
+                                }
+                            }
+                        }
+                    }
                 };
                 
                 treeDiv.appendChild(patientDiv);
