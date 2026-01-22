@@ -4,3 +4,4 @@ old/
 test_dcmtk/
 __pycache__/
 .env
+*.csv
