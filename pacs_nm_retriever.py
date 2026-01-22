@@ -384,7 +384,7 @@ class PACSNMRetriever:
         
         cmd.extend(['-od', str(self.output_dir)])
         
-        logger.info(f"Running command: {' '.join(cmd)}")
+        logger.info(f"Running getscu command: {' '.join(cmd)}")
         
         try:
             result = subprocess.run(
@@ -395,16 +395,21 @@ class PACSNMRetriever:
             )
             
             if result.returncode == 0:
-                # Log getscu output for debugging
+                # Log getscu output for debugging (getscu writes to stderr even on success)
                 if result.stdout:
-                    logger.debug(f"getscu stdout:\n{result.stdout}")
+                    logger.info(f"getscu stdout:\n{result.stdout}")
+                if result.stderr:
+                    logger.info(f"getscu stderr:\n{result.stderr}")
                 
                 # Parse output to count retrieved images
                 completed = 0
-                for line in result.stdout.split('\n'):
-                    if 'Completed Suboperations' in line:
+                output_text = result.stdout + result.stderr
+                for line in output_text.split('\n'):
+                    if 'Completed Suboperations' in line or 'Received' in line:
+                        logger.info(f"  -> {line.strip()}")
                         try:
-                            completed = int(line.split(':')[1].strip())
+                            if 'Completed Suboperations' in line:
+                                completed = int(line.split(':')[1].strip())
                         except:
                             pass
                 
