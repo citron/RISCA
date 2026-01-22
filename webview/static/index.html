@@ -538,12 +538,27 @@
                         const imageListDiv = document.createElement('div');
                         imageListDiv.className = 'image-list';
                         
-                        series.images.sort((a, b) => a.localeCompare(b));
+                        series.images.sort((a, b) => {
+                            const pathA = typeof a === 'string' ? a : a.path;
+                            const pathB = typeof b === 'string' ? b : b.path;
+                            return pathA.localeCompare(pathB);
+                        });
                         
-                        series.images.forEach((imagePath, idx) => {
+                        series.images.forEach((imageInfo, idx) => {
                             const imageDiv = document.createElement('div');
                             imageDiv.className = 'image-item';
-                            imageDiv.textContent = `🖼️ Image ${idx + 1}`;
+                            
+                            // Handle both old format (string) and new format (object)
+                            const imagePath = typeof imageInfo === 'string' ? imageInfo : imageInfo.path;
+                            const rows = imageInfo.rows || 0;
+                            const cols = imageInfo.cols || 0;
+                            
+                            if (rows > 0 && cols > 0) {
+                                imageDiv.textContent = `🖼️ Image ${idx + 1} (${cols}×${rows})`;
+                            } else {
+                                imageDiv.textContent = `🖼️ Image ${idx + 1}`;
+                            }
+                            
                             imageDiv.onclick = (e) => {
                                 e.stopPropagation();
                                 loadDicomFile(imagePath);
@@ -565,7 +580,8 @@
                             
                             // Auto-load first image when expanding
                             if (!wasExpanded && series.images.length > 0) {
-                                const firstImagePath = series.images[0];
+                                const firstImage = series.images[0];
+                                const firstImagePath = typeof firstImage === 'string' ? firstImage : firstImage.path;
                                 loadDicomFile(firstImagePath);
                                 // Wait a bit for DOM update before setting active
                                 setTimeout(() => {
@@ -594,7 +610,9 @@
                             if (seriesList.length > 0) {
                                 const firstSeries = seriesList[0];
                                 if (firstSeries.images.length > 0) {
-                                    loadDicomFile(firstSeries.images[0]);
+                                    const firstImage = firstSeries.images[0];
+                                    const firstImagePath = typeof firstImage === 'string' ? firstImage : firstImage.path;
+                                    loadDicomFile(firstImagePath);
                                     // Auto-expand the first series and select first image
                                     setTimeout(() => {
                                         const firstSeriesDiv = seriesListDiv.querySelector('.series-item');
@@ -634,7 +652,9 @@
                             if (seriesList.length > 0) {
                                 const firstSeries = seriesList[0];
                                 if (firstSeries.images.length > 0) {
-                                    loadDicomFile(firstSeries.images[0]);
+                                    const firstImage = firstSeries.images[0];
+                                    const firstImagePath = typeof firstImage === 'string' ? firstImage : firstImage.path;
+                                    loadDicomFile(firstImagePath);
                                     // Auto-expand the first study and series
                                     setTimeout(() => {
                                         const firstStudyDiv = studiesDiv.querySelector('.study-item');

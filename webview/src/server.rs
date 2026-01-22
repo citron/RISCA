@@ -15,12 +15,19 @@ struct FileEntry {
 }
 
 #[derive(Serialize, Clone)]
+struct DicomImageInfo {
+    path: String,
+    rows: u32,
+    cols: u32,
+}
+
+#[derive(Serialize, Clone)]
 struct DicomSeriesInfo {
     series_uid: String,
     series_description: String,
     modality: String,
     image_count: usize,
-    images: Vec<String>,
+    images: Vec<DicomImageInfo>,
 }
 
 #[derive(Serialize, Clone)]
@@ -122,6 +129,16 @@ async fn get_dicom_tree() -> Result<HttpResponse> {
                         .map(|s| s.to_string())
                         .unwrap_or_else(|| "Unknown".to_string());
                     
+                    let rows = obj.element_by_name("Rows")
+                        .ok()
+                        .and_then(|e| e.to_int::<u32>().ok())
+                        .unwrap_or(0);
+                    
+                    let cols = obj.element_by_name("Columns")
+                        .ok()
+                        .and_then(|e| e.to_int::<u32>().ok())
+                        .unwrap_or(0);
+                    
                     let relative_path = path.strip_prefix("/home/gacquewi/dicom")
                         .unwrap_or(&path)
                         .to_string_lossy()
@@ -148,7 +165,11 @@ async fn get_dicom_tree() -> Result<HttpResponse> {
                         images: Vec::new(),
                     });
                     
-                    series.images.push(relative_path);
+                    series.images.push(DicomImageInfo {
+                        path: relative_path,
+                        rows,
+                        cols,
+                    });
                     series.image_count = series.images.len();
                 }
             }
