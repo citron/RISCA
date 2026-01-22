@@ -47,7 +47,7 @@ class PACSNMRetriever:
         pacs_host: str,
         pacs_port: int,
         pacs_aet: str,
-        local_aet: str = "ALBIZIA_WG",
+        local_aet: str = "MY_LOCAL_AET",
         local_port: int = 11112,
         output_dir: str = "./nm_images",
         use_study_root: bool = True,
@@ -351,6 +351,7 @@ class PACSNMRetriever:
         study_uid = ds.StudyInstanceUID
         
         # Build getscu command
+        # Note: getscu doesn't support --filename-extension, files saved as-is from PACS
         cmd = [
             'getscu',
             '-v',  # Verbose
@@ -390,6 +391,22 @@ class PACSNMRetriever:
                             completed = int(line.split(':')[1].strip())
                         except:
                             pass
+                
+                # Rename files without .dcm extension
+                renamed_count = 0
+                for root, dirs, files in os.walk(self.output_dir):
+                    for filename in files:
+                        if not filename.endswith('.dcm'):
+                            old_path = Path(root) / filename
+                            new_path = Path(root) / f"{filename}.dcm"
+                            try:
+                                old_path.rename(new_path)
+                                renamed_count += 1
+                            except Exception as e:
+                                logger.warning(f"Failed to rename {old_path}: {e}")
+                
+                if renamed_count > 0:
+                    logger.info(f"Renamed {renamed_count} files to add .dcm extension")
                 
                 if completed > 0:
                     self.image_count += completed
@@ -585,8 +602,8 @@ Examples:
     )
     parser.add_argument(
         '--local-aet',
-        default=os.getenv('LOCAL_AET', 'ALBIZIA_WG'),
-        help='Local Application Entity Title (default: from .env or ALBIZIA_WG)'
+        default=os.getenv('LOCAL_AET', 'MY_LOCAL_AET'),
+        help='Local Application Entity Title (default: from .env or MY_LOCAL_AET)'
     )
     parser.add_argument(
         '--local-port',
