@@ -72,28 +72,39 @@ while [ $current -le $end ]; do
     echo "Récupération des données..."
     if [ "$DRY_RUN" = false ]; then
         if uv run pacs_nm_retriever.py --from-date "$date_debut" --to-date "$date_fin" -o "$DICOM_DIR/"; then
-            # Exécuter risca.sh
-            echo "Exécution de ~/risca.sh..."
-            if [ -f "$HOME/risca.sh" ]; then
-                "$HOME/risca.sh"
-            else
-                echo "ATTENTION: ~/risca.sh non trouvé"
-            fi
+            # Vérifier s'il y a des fichiers DICOM
+            dicom_count=$(find "$DICOM_DIR" -type f -name "*.dcm" 2>/dev/null | wc -l)
             
-            # Vérifier si un fichier predictions.csv a été généré
-            if [ -f "$DICOM_DIR/predictions.csv" ]; then
-                # Si c'est la première fois, copier l'en-tête
-                if [ "$header_written" = false ]; then
-                    cat "$DICOM_DIR/predictions.csv" >> "$PREDICTIONS_FILE"
-                    header_written=true
-                    echo "Prédictions ajoutées (avec en-tête)"
-                else
-                    # Sinon, ajouter seulement les données (sans la première ligne)
-                    tail -n +2 "$DICOM_DIR/predictions.csv" >> "$PREDICTIONS_FILE"
-                    echo "Prédictions ajoutées (sans en-tête)"
-                fi
+            if [ "$dicom_count" -eq 0 ]; then
+                echo "Aucun fichier DICOM trouvé pour cette période - passage à la semaine suivante"
             else
-                echo "ATTENTION: Aucun fichier predictions.csv trouvé pour cette période"
+                echo "Nombre de fichiers DICOM trouvés: $dicom_count"
+                
+                # Exécuter risca.sh
+                echo "Exécution de ~/risca.sh..."
+                if [ -f "$HOME/risca.sh" ]; then
+                    "$HOME/risca.sh" || {
+                        echo "ATTENTION: ~/risca.sh a échoué, mais on continue"
+                    }
+                else
+                    echo "ATTENTION: ~/risca.sh non trouvé"
+                fi
+                
+                # Vérifier si un fichier predictions.csv a été généré
+                if [ -f "$DICOM_DIR/predictions.csv" ]; then
+                    # Si c'est la première fois, copier l'en-tête
+                    if [ "$header_written" = false ]; then
+                        cat "$DICOM_DIR/predictions.csv" >> "$PREDICTIONS_FILE"
+                        header_written=true
+                        echo "Prédictions ajoutées (avec en-tête)"
+                    else
+                        # Sinon, ajouter seulement les données (sans la première ligne)
+                        tail -n +2 "$DICOM_DIR/predictions.csv" >> "$PREDICTIONS_FILE"
+                        echo "Prédictions ajoutées (sans en-tête)"
+                    fi
+                else
+                    echo "ATTENTION: Aucun fichier predictions.csv trouvé pour cette période"
+                fi
             fi
         else
             echo "ERREUR: La récupération a échoué pour la période $date_debut - $date_fin"
