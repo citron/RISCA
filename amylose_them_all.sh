@@ -5,6 +5,14 @@
 
 set -e  # Arrêter en cas d'erreur
 
+# Parse arguments
+DRY_RUN=false
+if [[ "$1" == "--dry-run" ]] || [[ "$1" == "-n" ]]; then
+    DRY_RUN=true
+    echo "MODE DRY-RUN: Aucune commande ne sera exécutée"
+    echo "=============================================="
+fi
+
 DICOM_DIR="$HOME/dicom"
 PREDICTIONS_DIR="$HOME/predictions"
 PREDICTIONS_FILE="$PREDICTIONS_DIR/predictions.csv"
@@ -52,38 +60,49 @@ while [ $current -le $end ]; do
     
     # Vider le répertoire dicom
     echo "Nettoyage de $DICOM_DIR..."
-    rm -rf "$DICOM_DIR"
-    mkdir -p "$DICOM_DIR"
+    if [ "$DRY_RUN" = false ]; then
+        rm -rf "$DICOM_DIR"
+        mkdir -p "$DICOM_DIR"
+    else
+        echo "[DRY-RUN] rm -rf $DICOM_DIR"
+        echo "[DRY-RUN] mkdir -p $DICOM_DIR"
+    fi
     
     # Lancer la récupération et prédiction
     echo "Récupération des données..."
-    if uv run pacs_nm_retriever.py --from-date "$date_debut" --to-date "$date_fin" -o "$DICOM_DIR/"; then
-        # Exécuter risca.sh
-        echo "Exécution de ~/risca.sh..."
-        if [ -f "$HOME/risca.sh" ]; then
-            "$HOME/risca.sh"
-        else
-            echo "ATTENTION: ~/risca.sh non trouvé"
-        fi
-        
-        # Vérifier si un fichier predictions.csv a été généré
-        if [ -f "$DICOM_DIR/predictions.csv" ]; then
-            # Si c'est la première fois, copier l'en-tête
-            if [ "$header_written" = false ]; then
-                cat "$DICOM_DIR/predictions.csv" >> "$PREDICTIONS_FILE"
-                header_written=true
-                echo "Prédictions ajoutées (avec en-tête)"
+    if [ "$DRY_RUN" = false ]; then
+        if uv run pacs_nm_retriever.py --from-date "$date_debut" --to-date "$date_fin" -o "$DICOM_DIR/"; then
+            # Exécuter risca.sh
+            echo "Exécution de ~/risca.sh..."
+            if [ -f "$HOME/risca.sh" ]; then
+                "$HOME/risca.sh"
             else
-                # Sinon, ajouter seulement les données (sans la première ligne)
-                tail -n +2 "$DICOM_DIR/predictions.csv" >> "$PREDICTIONS_FILE"
-                echo "Prédictions ajoutées (sans en-tête)"
+                echo "ATTENTION: ~/risca.sh non trouvé"
+            fi
+            
+            # Vérifier si un fichier predictions.csv a été généré
+            if [ -f "$DICOM_DIR/predictions.csv" ]; then
+                # Si c'est la première fois, copier l'en-tête
+                if [ "$header_written" = false ]; then
+                    cat "$DICOM_DIR/predictions.csv" >> "$PREDICTIONS_FILE"
+                    header_written=true
+                    echo "Prédictions ajoutées (avec en-tête)"
+                else
+                    # Sinon, ajouter seulement les données (sans la première ligne)
+                    tail -n +2 "$DICOM_DIR/predictions.csv" >> "$PREDICTIONS_FILE"
+                    echo "Prédictions ajoutées (sans en-tête)"
+                fi
+            else
+                echo "ATTENTION: Aucun fichier predictions.csv trouvé pour cette période"
             fi
         else
-            echo "ATTENTION: Aucun fichier predictions.csv trouvé pour cette période"
+            echo "ERREUR: La récupération a échoué pour la période $date_debut - $date_fin"
+            # Continuer avec la semaine suivante même en cas d'erreur
         fi
     else
-        echo "ERREUR: La récupération a échoué pour la période $date_debut - $date_fin"
-        # Continuer avec la semaine suivante même en cas d'erreur
+        echo "[DRY-RUN] uv run pacs_nm_retriever.py --from-date $date_debut --to-date $date_fin -o $DICOM_DIR/"
+        echo "[DRY-RUN] $HOME/risca.sh"
+        echo "[DRY-RUN] Concaténation vers $PREDICTIONS_FILE"
     fi
     
     # Passer à la semaine suivante
