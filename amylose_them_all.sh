@@ -35,14 +35,14 @@ echo "=========================================="
 
 while [ $current -le $end ]; do
     # Calculer date de début de la semaine
-    date_debut=$(date -d "@$current" +%Y-%m-%d)
+    date_debut=$(date -d "@$current" +%Y%m%d)
     
     # Calculer date de fin de la semaine (6 jours plus tard)
     next=$((current + week_seconds - 86400))
     if [ $next -gt $end ]; then
         next=$end
     fi
-    date_fin=$(date -d "@$next" +%Y-%m-%d)
+    date_fin=$(date -d "@$next" +%Y%m%d)
     
     week_count=$((week_count + 1))
     
