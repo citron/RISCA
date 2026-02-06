@@ -8,3 +8,8 @@ __pycache__/
 *.png
 webview/target/
 webview/Cargo.lock
+pacs/
+pacs_export/
+pacs_studies/
+pacs_patients/
+.pacs*

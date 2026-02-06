@@ -1,0 +1,644 @@
+#!/usr/bin/env python3
+"""
+PACS Patient Image Retriever
+
+This script retrieves all DICOM images for a specific patient from a PACS server using DICOM C-FIND and C-MOVE operations.
+Images are organized by study date in folders: pacs/patient/{iso_date_of_study}
+"""
+
+import argparse
+import logging
+import os
+import sys
+from pathlib import Path
+from typing import Optional
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
+try:
+    from pynetdicom import AE, evt, debug_logger
+    from pynetdicom.sop_class import (
+        PatientRootQueryRetrieveInformationModelFind,
+        PatientRootQueryRetrieveInformationModelMove,
+        StudyRootQueryRetrieveInformationModelFind,
+        StudyRootQueryRetrieveInformationModelMove,
+    )
+    from pydicom.dataset import Dataset
+except ImportError:
+    print("Error: pynetdicom and pydicom are required. Install with:")
+    print("  pip install pynetdicom pydicom")
+    sys.exit(1)
+
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+
+class PACSPatientRetriever:
+    """Retrieve all DICOM images for a specific patient from PACS"""
+    
+    def __init__(
+        self,
+        pacs_host: str,
+        pacs_port: int,
+        pacs_aet: str,
+        patient_name: str,
+        local_aet: str = "MY_LOCAL_AET",
+        local_port: int = 11112,
+        output_base_dir: str = "./pacs/patient",
+        use_study_root: bool = True,
+        dry_run: bool = False,
+        use_c_get: bool = True  # Default to C-GET (simpler)
+    ):
+        self.pacs_host = pacs_host
+        self.pacs_port = pacs_port
+        self.pacs_aet = pacs_aet
+        self.patient_name = patient_name
+        self.local_aet = local_aet
+        self.local_port = local_port
+        self.output_base_dir = Path(output_base_dir).resolve()
+        
+        try:
+            self.output_base_dir.mkdir(parents=True, exist_ok=True)
+            logger.info(f"Output base directory: {self.output_base_dir}")
+        except PermissionError as e:
+            logger.error(f"Permission denied creating directory {self.output_base_dir}: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Failed to create output directory {self.output_base_dir}: {e}")
+            raise
+        
+        self.use_study_root = use_study_root
+        self.dry_run = dry_run
+        self.use_c_get = use_c_get
+        
+        # Initialize Application Entity
+        self.ae = AE(ae_title=local_aet)
+        
+        # Set network timeout (30 seconds)
+        self.ae.network_timeout = 30
+        self.ae.acse_timeout = 30
+        self.ae.dimse_timeout = 30
+        
+        # Add presentation contexts for query/retrieve
+        if use_study_root:
+            self.ae.add_requested_context(StudyRootQueryRetrieveInformationModelFind)
+            if use_c_get:
+                from pynetdicom.sop_class import StudyRootQueryRetrieveInformationModelGet
+                self.ae.add_requested_context(StudyRootQueryRetrieveInformationModelGet)
+            else:
+                self.ae.add_requested_context(StudyRootQueryRetrieveInformationModelMove)
+        else:
+            self.ae.add_requested_context(PatientRootQueryRetrieveInformationModelFind)
+            if use_c_get:
+                from pynetdicom.sop_class import PatientRootQueryRetrieveInformationModelGet
+                self.ae.add_requested_context(PatientRootQueryRetrieveInformationModelGet)
+            else:
+                self.ae.add_requested_context(PatientRootQueryRetrieveInformationModelMove)
+        
+        # Add storage contexts for NM and ALL common DICOM SOP classes
+        # This PACS might have NM data in different SOP classes
+        from pynetdicom.sop_class import (
+            NuclearMedicineImageStorage,
+            CTImageStorage,
+            MRImageStorage,
+            UltrasoundImageStorage,
+            SecondaryCaptureImageStorage,
+            ComputedRadiographyImageStorage,
+            DigitalXRayImageStorageForPresentation,
+            DigitalXRayImageStorageForProcessing,
+        )
+        from pydicom.uid import (
+            ImplicitVRLittleEndian,
+            ExplicitVRLittleEndian,
+            ExplicitVRBigEndian,
+            JPEGBaseline8Bit,
+            JPEG2000Lossless,
+        )
+        
+        transfer_syntaxes = [
+            ImplicitVRLittleEndian,
+            ExplicitVRLittleEndian,
+            ExplicitVRBigEndian,
+            JPEGBaseline8Bit,
+            JPEG2000Lossless,
+        ]
+        
+        # Add all common storage SOP classes
+        storage_classes = [
+            NuclearMedicineImageStorage,
+            CTImageStorage,
+            MRImageStorage,
+            UltrasoundImageStorage,
+            SecondaryCaptureImageStorage,
+            ComputedRadiographyImageStorage,
+            DigitalXRayImageStorageForPresentation,
+            DigitalXRayImageStorageForProcessing,
+        ]
+        
+        # Add as both requested (for SCU) and supported (for SCP)
+        for sop_class in storage_classes:
+            for ts in transfer_syntaxes:
+                self.ae.add_requested_context(sop_class, ts)
+                self.ae.add_supported_context(sop_class, ts)
+        
+        self.image_count = 0
+        
+    def handle_store(self, event):
+        """Handle C-STORE requests (incoming DICOM files)"""
+        ds = event.dataset
+        ds.file_meta = event.file_meta
+        
+        # Extract study date and format as ISO date
+        study_date = getattr(ds, 'StudyDate', 'UNKNOWN')
+        if study_date != 'UNKNOWN' and len(study_date) == 8:
+            # Convert YYYYMMDD to YYYY-MM-DD
+            iso_date = f"{study_date[:4]}-{study_date[4:6]}-{study_date[6:]}"
+        else:
+            iso_date = 'UNKNOWN_DATE'
+        
+        series_uid = getattr(ds, 'SeriesInstanceUID', 'UNKNOWN')
+        sop_uid = getattr(ds, 'SOPInstanceUID', 'UNKNOWN')
+        
+        self.image_count += 1
+        
+        if self.dry_run:
+            logger.info(f"[DRY-RUN] Would store image {self.image_count}: {iso_date}/{series_uid}/{sop_uid}.dcm")
+            return 0x0000
+        
+        # Create directory structure: pacs/patient/{iso_date}/SeriesInstanceUID/
+        save_dir = self.output_base_dir / iso_date / series_uid
+        save_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Save file
+        filename = f"{sop_uid}.dcm"
+        filepath = save_dir / filename
+        
+        try:
+            ds.save_as(filepath, write_like_original=False)
+            logger.info(f"Stored image {self.image_count}: {filepath}")
+        except Exception as e:
+            logger.error(f"Failed to save image {self.image_count}: {e}")
+            return 0xC000  # Failure
+        
+        return 0x0000  # Success
+    
+    def find_patient_studies(self, limit: Optional[int] = None) -> list[Dataset]:
+        """Find all studies for the specified patient
+        
+        Args:
+            limit: Maximum number of studies to return
+        """
+        logger.info(f"Searching for studies for patient '{self.patient_name}' on {self.pacs_host}:{self.pacs_port}")
+        
+        # Query for patient studies
+        ds = Dataset()
+        ds.QueryRetrieveLevel = 'STUDY'
+        ds.PatientName = self.patient_name
+        ds.StudyInstanceUID = ''
+        ds.StudyDate = ''
+        ds.StudyDescription = ''
+        ds.PatientID = ''
+        ds.ModalitiesInStudy = ''
+        
+        all_studies = []
+        
+        # Associate with PACS
+        query_model = (StudyRootQueryRetrieveInformationModelFind if self.use_study_root
+                      else PatientRootQueryRetrieveInformationModelFind)
+        
+        try:
+            assoc = self.ae.associate(self.pacs_host, self.pacs_port, ae_title=self.pacs_aet)
+            
+            if assoc.is_established:
+                logger.info(f"Sending C-FIND request for patient '{self.patient_name}'...")
+                responses = assoc.send_c_find(ds, query_model)
+                
+                for status, identifier in responses:
+                    if status and status.Status in (0xFF00, 0xFF01):  # Pending
+                        if identifier:
+                            all_studies.append(identifier)
+                            study_date = getattr(identifier, 'StudyDate', 'UNKNOWN')
+                            study_desc = getattr(identifier, 'StudyDescription', 'No description')
+                            logger.info(f"Found study: Date={study_date}, Description={study_desc}")
+                            if limit and len(all_studies) >= limit:
+                                logger.info(f"Reached study limit of {limit}")
+                                break
+                
+                assoc.release()
+                logger.info(f"Retrieved {len(all_studies)} studies for patient '{self.patient_name}'")
+            else:
+                logger.error("Failed to associate with PACS")
+                return []
+        except Exception as e:
+            logger.error(f"Error during C-FIND: {e}")
+            return []
+        
+        if not all_studies:
+            logger.warning(f"No studies found for patient '{self.patient_name}'")
+            return []
+        
+        return all_studies
+    
+    def retrieve_study(self, study_uid: str, study_date: str) -> bool:
+        """Retrieve all images from study using C-GET or C-MOVE
+        
+        Args:
+            study_uid: Study Instance UID
+            study_date: Study date (YYYYMMDD) for organizing output
+        """
+        logger.info(f"{'[DRY-RUN] ' if self.dry_run else ''}Retrieving study: {study_uid}")
+        
+        if self.dry_run:
+            logger.info(f"[DRY-RUN] Would retrieve study {study_uid}")
+            return True
+        
+        # Set current study date for the handle_store method to use
+        self.current_study_date = study_date
+        
+        # Create retrieve dataset for STUDY level (retrieve all series)
+        ds = Dataset()
+        ds.QueryRetrieveLevel = 'STUDY'
+        ds.StudyInstanceUID = study_uid
+        
+        if self.use_c_get:
+            return self._retrieve_with_get(ds)
+        else:
+            return self._retrieve_with_move(ds)
+    
+    def _retrieve_with_get(self, ds: Dataset) -> bool:
+        """Retrieve using C-GET via DCMTK getscu (more reliable)"""
+        import subprocess
+        import shutil
+        
+        # Check if getscu is available
+        if not shutil.which('getscu'):
+            logger.error("getscu (DCMTK) not found in PATH")
+            logger.error("Install with: apt-get install dcmtk")
+            return False
+        
+        query_level = ds.QueryRetrieveLevel
+        study_uid = ds.StudyInstanceUID
+        
+        # Build getscu command
+        # Note: getscu doesn't support --filename-extension, files saved as-is from PACS
+        cmd = [
+            'getscu',
+            '-v',  # Verbose
+            '-S',  # Study Root
+            '-aet', self.local_aet,
+            '-aec', self.pacs_aet,
+            self.pacs_host,
+            str(self.pacs_port),
+            '-k', f'QueryRetrieveLevel={query_level}',
+            '-k', f'StudyInstanceUID={study_uid}',
+        ]
+        
+        # Add SeriesInstanceUID if querying at SERIES level
+        if query_level == 'SERIES' and hasattr(ds, 'SeriesInstanceUID'):
+            series_uid = ds.SeriesInstanceUID
+            cmd.extend(['-k', f'SeriesInstanceUID={series_uid}'])
+            logger.info(f"Retrieving NM series {series_uid}...")
+        else:
+            logger.info(f"Retrieving study {study_uid}...")
+        
+        cmd.extend(['-od', str(self.output_base_dir)])
+        
+        logger.info(f"Running getscu command: {' '.join(cmd)}")
+        
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=300  # 5 minute timeout
+            )
+            
+            if result.returncode == 0:
+                # Log getscu output for debugging (getscu writes to stderr even on success)
+                if result.stdout:
+                    logger.info(f"getscu stdout:\n{result.stdout}")
+                if result.stderr:
+                    logger.info(f"getscu stderr:\n{result.stderr}")
+                
+                # Parse output to count retrieved images
+                completed = 0
+                output_text = result.stdout + result.stderr
+                for line in output_text.split('\n'):
+                    if 'Completed Suboperations' in line or 'Received' in line:
+                        logger.info(f"  -> {line.strip()}")
+                        try:
+                            if 'Completed Suboperations' in line:
+                                completed = int(line.split(':')[1].strip())
+                        except:
+                            pass
+                
+                # Count files actually in output directory
+                total_files = sum(1 for root, dirs, files in os.walk(self.output_base_dir) for f in files)
+                logger.info(f"Files found in {self.output_base_dir}: {total_files}")
+                
+                # Rename files without .dcm extension
+                renamed_count = 0
+                for root, dirs, files in os.walk(self.output_base_dir):
+                    for filename in files:
+                        if not filename.endswith('.dcm'):
+                            old_path = Path(root) / filename
+                            new_path = Path(root) / f"{filename}.dcm"
+                            try:
+                                old_path.rename(new_path)
+                                renamed_count += 1
+                            except Exception as e:
+                                logger.warning(f"Failed to rename {old_path}: {e}")
+                
+                if renamed_count > 0:
+                    logger.info(f"Renamed {renamed_count} files to add .dcm extension")
+                
+                if completed > 0:
+                    self.image_count += completed
+                    logger.info(f"Retrieved {completed} images")
+                else:
+                    logger.info(f"getscu completed (check {self.output_base_dir} for files)")
+                    
+                return True
+            else:
+                logger.error(f"getscu failed with return code {result.returncode}")
+                if result.stderr:
+                    logger.error(f"stderr: {result.stderr}")
+                return False
+                
+        except subprocess.TimeoutExpired:
+            logger.error(f"getscu timed out after 5 minutes")
+            return False
+        except Exception as e:
+            logger.error(f"Error running getscu: {e}")
+            return False
+    
+    def _retrieve_with_move(self, ds: Dataset) -> bool:
+        """Retrieve using C-MOVE (requires storage SCP)"""
+        # Setup storage SCP handlers
+        handlers = [(evt.EVT_C_STORE, self.handle_store)]
+        
+        # Start storage SCP in background
+        try:
+            logger.info(f"Starting storage SCP on port {self.local_port}...")
+            scp = self.ae.start_server(
+                ('0.0.0.0', self.local_port),  # Listen on all interfaces
+                block=False,
+                evt_handlers=handlers
+            )
+            
+            if scp:
+                logger.info(f"Storage SCP started successfully on port {self.local_port}")
+            else:
+                logger.error("start_server returned None")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Failed to start storage SCP on port {self.local_port}: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return False
+        
+        try:
+            # Associate and send C-MOVE
+            from pynetdicom.sop_class import (
+                StudyRootQueryRetrieveInformationModelMove,
+                PatientRootQueryRetrieveInformationModelMove
+            )
+            
+            move_model = (StudyRootQueryRetrieveInformationModelMove if self.use_study_root
+                         else PatientRootQueryRetrieveInformationModelMove)
+            
+            assoc = self.ae.associate(
+                self.pacs_host,
+                self.pacs_port,
+                ae_title=self.pacs_aet
+            )
+            
+            if assoc.is_established:
+                responses = assoc.send_c_move(
+                    ds,
+                    self.local_aet,  # Destination AET (ourselves)
+                    move_model
+                )
+                
+                for status, identifier in responses:
+                    if status:
+                        logger.debug(f"C-MOVE status: 0x{status.Status:04x}")
+                        if status.Status in (0xA701, 0xA702, 0xA900, 0xC000):
+                            logger.warning(f"C-MOVE warning/error status: 0x{status.Status:04x}")
+                
+                assoc.release()
+                return True
+            else:
+                logger.error("Failed to associate for C-MOVE")
+                return False
+        except Exception as e:
+            logger.error(f"Error during C-MOVE: {e}")
+            return False
+        finally:
+            scp.shutdown()
+    
+    def retrieve_images(
+        self,
+        max_studies: Optional[int] = None,
+        max_images: Optional[int] = None
+    ):
+        """
+        Retrieve all images for the specified patient from PACS
+        
+        Args:
+            max_studies: Maximum number of studies to retrieve (None = all)
+            max_images: Maximum number of images to retrieve (None = all)
+        """
+        # Find studies for patient
+        studies = self.find_patient_studies(limit=max_studies)
+        
+        if not studies:
+            logger.warning(f"No studies found for patient '{self.patient_name}'")
+            return
+        
+        logger.info(f"Found {len(studies)} studies to retrieve for patient '{self.patient_name}'")
+        
+        # Estimate total images
+        total_images = sum(int(getattr(s, 'NumberOfStudyRelatedInstances', 0) or 0) for s in studies)
+        if total_images > 0:
+            logger.info(f"Estimated total images: {total_images}")
+        
+        if not self.dry_run:
+            logger.warning("=" * 60)
+            logger.warning("PRODUCTION MODE: Images will be downloaded!")
+            logger.warning(f"Target: {self.pacs_host}:{self.pacs_port} ({self.pacs_aet})")
+            logger.warning(f"Patient: {self.patient_name}")
+            logger.warning(f"Studies to retrieve: {len(studies)}")
+            logger.warning(f"Output directory: {self.output_base_dir}")
+            logger.warning("=" * 60)
+        
+        logger.info(f"Starting retrieval of {len(studies)} studies")
+        
+        for idx, study in enumerate(studies, 1):
+            study_uid = study.StudyInstanceUID
+            study_date = getattr(study, 'StudyDate', 'UNKNOWN')
+            study_desc = getattr(study, 'StudyDescription', 'No description')
+            logger.info(f"Processing study {idx}/{len(studies)}: Date={study_date}, Description={study_desc}")
+            
+            self.retrieve_study(study_uid, study_date)
+            
+            if max_images and self.image_count >= max_images:
+                logger.info(f"Reached image limit of {max_images}")
+                break
+        
+        if self.dry_run:
+            logger.info(f"[DRY-RUN] Would have retrieved approximately {self.image_count} images to {self.output_base_dir}")
+        else:
+            logger.info(f"Retrieval complete. Retrieved {self.image_count} images to {self.output_base_dir}")
+        
+        # Count actual files
+        import os
+        if os.path.exists(self.output_base_dir):
+            total_files = sum(1 for root, dirs, files in os.walk(self.output_base_dir) for f in files)
+            logger.info(f"Total files in output directory: {total_files}")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Retrieve all DICOM images for a specific patient from PACS',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''
+Examples:
+  # DRY-RUN FIRST (RECOMMENDED): Test connection without downloading
+  %(prog)s "DOE^JOHN" --dry-run
+  
+  # Retrieve all studies for a patient
+  %(prog)s "DOE^JOHN"
+  
+  # Retrieve maximum 5 studies for a patient
+  %(prog)s "DOE^JOHN" --max-studies 5
+  
+  # Use custom output directory
+  %(prog)s "DOE^JOHN" -o /data/patient_images
+  
+  # Override connection parameters if needed
+  %(prog)s "DOE^JOHN" --host OTHER_HOST --aet OTHER_AET --local-aet OTHER_LOCAL
+
+Note: Patient name format is typically "LAST^FIRST" (use quotes if it contains special characters)
+        '''
+    )
+    
+    parser.add_argument(
+        'patient_name',
+        help='Patient name to search for (format: "LAST^FIRST")'
+    )
+    
+    parser.add_argument(
+        '--host',
+        default=os.getenv('PACS_HOST'),
+        help='PACS server hostname or IP address (required if not set in .env)'
+    )
+    parser.add_argument(
+        '--port',
+        type=int,
+        default=int(os.getenv('PACS_PORT', '11112')),
+        help='PACS server port (default: from .env or 11112)'
+    )
+    parser.add_argument(
+        '--aet',
+        default=os.getenv('PACS_AET'),
+        help='PACS Application Entity Title (required if not set in .env)'
+    )
+    parser.add_argument(
+        '--local-aet',
+        default=os.getenv('LOCAL_AET', 'MY_LOCAL_AET'),
+        help='Local Application Entity Title (default: from .env or MY_LOCAL_AET)'
+    )
+    parser.add_argument(
+        '--local-port',
+        type=int,
+        default=int(os.getenv('LOCAL_PORT', '11112')),
+        help='Local port for receiving images (default: from .env or 11112)'
+    )
+    parser.add_argument(
+        '-o', '--output',
+        default='./pacs/patient',
+        help='Output base directory for DICOM files (default: ./pacs/patient)'
+    )
+    parser.add_argument(
+        '--max-studies',
+        type=int,
+        help='Maximum number of studies to retrieve (default: all)'
+    )
+    parser.add_argument(
+        '--max-images',
+        type=int,
+        help='Maximum number of images to retrieve (default: all)'
+    )
+    parser.add_argument(
+        '--use-c-move',
+        action='store_true',
+        help='Use C-MOVE instead of C-GET (requires network routing and storage SCP)'
+    )
+    parser.add_argument(
+        '--patient-root',
+        action='store_true',
+        help='Use Patient Root model instead of Study Root (Study Root is default for this PACS)'
+    )
+    parser.add_argument(
+        '--dry-run',
+        action='store_true',
+        help='Perform queries but do not download images (test mode)'
+    )
+    parser.add_argument(
+        '--debug',
+        action='store_true',
+        help='Enable debug logging'
+    )
+    
+    args = parser.parse_args()
+    
+    # Validate required arguments
+    if not args.host:
+        parser.error("--host is required (set in .env or provide as argument)")
+    if not args.aet:
+        parser.error("--aet is required (set in .env or provide as argument)")
+    if not args.patient_name:
+        parser.error("patient_name is required")
+    
+    if args.debug:
+        debug_logger()
+        logging.getLogger().setLevel(logging.DEBUG)
+    
+    # Create retriever
+    retriever = PACSPatientRetriever(
+        pacs_host=args.host,
+        pacs_port=args.port,
+        pacs_aet=args.aet,
+        patient_name=args.patient_name,
+        local_aet=args.local_aet,
+        local_port=args.local_port,
+        output_base_dir=args.output,
+        use_study_root=not args.patient_root,  # Study Root is default
+        dry_run=args.dry_run,
+        use_c_get=not args.use_c_move  # C-GET is default
+    )
+    
+    # Retrieve images
+    try:
+        retriever.retrieve_images(
+            max_studies=args.max_studies,
+            max_images=args.max_images
+        )
+    except KeyboardInterrupt:
+        logger.info("Interrupted by user")
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"Error during retrieval: {e}", exc_info=True)
+        sys.exit(1)
+
+
+if __name__ == '__main__':
+    main()
