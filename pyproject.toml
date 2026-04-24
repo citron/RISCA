@@ -10,5 +10,5 @@ dependencies = [
     "pyarrow>=23.0.0",
     "pydicom>=3.0.1",
     "pynetdicom>=3.0.4",
-    "python-dotenv>=1.0.0",
+    "python-dotenv>=1.2.2",
 ]
